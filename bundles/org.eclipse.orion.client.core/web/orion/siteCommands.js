@@ -13,18 +13,18 @@
 define(['require', 'orion/commands', 'orion/siteUtils'],
 		function(require, mCommands, mSiteUtils) {
 	var Command = mCommands.Command;
-	var sitesCache = null;
 	var workspacesCache = null;
-
-	function SitesCache(siteService) {
-		this.sites = [];
-		var self = this;
-		siteService.getSiteConfigurations().then(
-			function(sites) {
-				self.sites = sites;
-			});
-	}
-
+//	var sitesCache = null;
+//
+//	function SitesCache(siteService) {
+//		this.sites = [];
+//		var self = this;
+//		siteService.getSiteConfigurations().then(
+//			function(sites) {
+//				self.sites = sites;
+//			});
+//	}
+//
 	function WorkspacesCache(fileService) {
 		var promise = null;
 		this.getWorkspaces = function() {
@@ -33,84 +33,6 @@ define(['require', 'orion/commands', 'orion/siteUtils'],
 			}
 			return promise;
 		};
-	}
-
-	function toArray(obj) {
-		return Array.isArray(obj) ? obj : [obj];
-	}
-
-	function oneFileOrFolder(items) {
-		items = toArray(items);
-		if (items.length === 0) {
-			return false;
-		}
-		// Looks like a file object, not a site configuration
-		return items[0].Location && !items[0].Mappings;
-	}
-
-	function makeViewOnSiteChoices(items, userData, serviceRegistry, viewOnCallback) {
-		function insertMappingFor(virtualPath, filePath, mappings) {
-			for (var i=0; i < mappings.length; i++) {
-				var mapping = mappings[i];
-				if (mapping.Target === filePath) {
-					return;
-				}
-			}
-			mappings.push({Source: virtualPath, Target: filePath, FriendlyPath: virtualPath});
-		}
-		function err(error) {
-			serviceRegistry.getService("orion.page.progress").setProgressResult(error);
-		}
-		items = toArray(items);
-		var callback = function(site, selectedItems) {
-			selectedItems = Array.isArray(selectedItems) ? selectedItems : [selectedItems];
-			var item = selectedItems[0];
-			var virtualPath = "/" + item.Name;
-			var siteService = serviceRegistry.getService("orion.sites");
-			var deferred;
-			if (!site) {
-				var name = item.Name + " site";
-				deferred = siteService.makeRelativeFilePath(item.Location).then(function(filePath) {
-					var mappings = [];
-					insertMappingFor(virtualPath, filePath, mappings);
-					return workspacesCache.getWorkspaces().then(function(workspaces) {
-						var workspaceId = workspaces[0].Id;
-						return siteService.createSiteConfiguration(name, workspaceId, mappings, null, {Status: "started"});
-					});
-				});
-			} else {
-				if (site.HostingStatus.Status === "started") {
-					site.HostingStatus.Status = "stopped";
-				}
-				deferred = siteService.makeRelativeFilePath(item.Location).then(function(filePath) {
-					insertMappingFor(virtualPath, filePath, site.Mappings);
-					return siteService.updateSiteConfiguration(site.Location, site).then(function(site) {
-						return siteService.updateSiteConfiguration(site.Location, {HostingStatus: {Status: "started"}});
-					});
-				});
-			}
-			deferred.then(function(site) {
-				// At this point the site is started
-				var a = document.createElement("a");
-				a.href = site.HostingStatus.URL + virtualPath + (item.Directory ? "/" : "");
-				var url = a.href;
-				if (viewOnCallback) {
-					viewOnCallback(url, site);
-				} else {
-					window.location = url;
-				}
-			}, err);
-		};
-		var choices = [];
-		for (var i = 0; i < sitesCache.sites.length; i++) {
-			var site = sitesCache.sites[i];
-			choices.push({name: site.Name, callback: callback.bind(null, site)});
-		}
-		if (choices.length) {
-			choices.push({});	//separator
-		}
-		choices.push({name: "New Site", callback: callback.bind(null, null)});
-		return choices;
 	}
 
 	/**
@@ -216,18 +138,66 @@ define(['require', 'orion/commands', 'orion/siteUtils'],
 
 		var viewOnSiteCommand = new Command({
 			name: "View on site",
-			tooltip: "View this file on a web site hosted by Orion",
+			tooltip: "View the file on this site",
 			id: "orion.site.viewon",
-			choiceCallback: function(items, userData) {
-				return makeViewOnSiteChoices(items, userData, serviceRegistry, options.viewOnCallback);
+			imageClass: "core-sprite-add",	// FIXME
+			visibleWhen: function(item) {
+				return typeof item.SiteConfiguration !== "undefined";
 			},
-			visibleWhen: oneFileOrFolder
+			// TODO move to siteService?
+			callback: function(item, callback) {
+				function insertMappingFor(virtualPath, filePath, mappings) {
+					for (var i=0; i < mappings.length; i++) {
+						var mapping = mappings[i];
+						if (mapping.Target === filePath) {
+							return;
+						}
+					}
+					mappings.push({Source: virtualPath, Target: filePath, FriendlyPath: virtualPath});
+				}
+				var site = item.SiteConfiguration;
+				var virtualPath = "/" + item.Name;
+				var deferred;
+				if (!site) {
+					var name = item.Name + " site";
+					deferred = siteService.makeRelativeFilePath(item.Location).then(function(filePath) {
+						var mappings = [];
+						insertMappingFor(virtualPath, filePath, mappings);
+						return workspacesCache.getWorkspaces().then(function(workspaces) {
+							var workspaceId = workspaces[0].Id;
+							return siteService.createSiteConfiguration(name, workspaceId, mappings, null, {Status: "started"});
+						});
+					});
+				} else {
+					if (site.HostingStatus.Status === "started") {
+						site.HostingStatus.Status = "stopped";
+					}
+					deferred = siteService.makeRelativeFilePath(item.Location).then(function(filePath) {
+						insertMappingFor(virtualPath, filePath, site.Mappings);
+						return siteService.updateSiteConfiguration(site.Location, site).then(function(site) {
+							return siteService.updateSiteConfiguration(site.Location, {HostingStatus: {Status: "started"}});
+						});
+					});
+				}
+				return deferred.then(function(site) {
+					// At this point the site is started
+					var a = document.createElement("a");
+					a.href = site.HostingStatus.URL + virtualPath + (item.Directory ? "/" : "");
+					var url = a.href;
+					// TODO 
+					if (typeof callback === "function") {
+						callback(url, site);
+					} else {
+						window.location = url;
+					}
+				}, options.errorCallback);
+			}
 			});
 		commandService.addCommand(viewOnSiteCommand);
 
-		if (!sitesCache) {
-			sitesCache = new SitesCache(siteService);
-		}
+//		if (!sitesCache) {
+//			sitesCache = new SitesCache(siteService);
+//		}
 		if (!workspacesCache) {
 			workspacesCache = new WorkspacesCache(serviceRegistry.getService("orion.core.file"));
 		}
